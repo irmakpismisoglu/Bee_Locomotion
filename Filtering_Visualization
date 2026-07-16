@@ -1,0 +1,161 @@
+# Bee Trajectory Filtering and Visualization
+# This script processes DeepLabCut tracking CSV files for two bees (this one is for GR group example),
+# removes unrealistic jumps in trajectories, keeps points inside two Petri dishes,
+# and visualizes the trajectories before and after filtering.
+
+
+
+# 2. Required libraries
+
+import pandas as pd                  # For data manipulation (read/write CSV)
+import numpy as np                   # For numerical operations
+import matplotlib.pyplot as plt      # For plotting
+from matplotlib.patches import Circle # For drawing Petri dish outlines
+import os                            # For filesystem interactions
+
+
+# 3. Settings
+# Folder containing CSV files
+folder = r"#folder containing csv files" 
+# File to process (optional)
+file_name = "GR19_B1_B2DLC_dlcrnetms5_New_DraftJul3shuffle1_200000_el.csv"  
+file_path = os.path.join(folder, file_name)  # Full path to the file
+
+shared_FN = 'DLC_dlcrnetms5_New_DraftJul3shuffle1_200000'   # DLC shared folder name (it is written in the CVS file headers as well)
+bees = ['b1','b2']                                       # Two tracked bees
+bodyparts = ['head','thorax','abdomen']                  # Body parts tracked
+colors = ['blue','red']                                  # Colors used for plotting each bee
+
+
+
+# 4. Load data for creating outlayers of petri dishes with r. 
+
+# DeepLabCut CSV has a 4-level header: scorer(as file name), individual, bodypart, coordinate
+df = pd.read_csv(file_path, header=[0,1,2,3], low_memory=False)  
+
+"""Compute geometric centers for top and bottom Petri dishes."""
+    x_top = df[(shared_FN, 'single', 'Top_petri_ref', 'x')].values[0]
+    y_top = df[(shared_FN, 'single', 'Top_petri_ref', 'y')].values[0]
+    x_inter = df[(shared_FN, 'single', 'interaction_point', 'x')].values[0]
+    y_inter = df[(shared_FN, 'single', 'interaction_point', 'y')].values[0]
+    x_bottom = df[(shared_FN, 'single', 'Bottom_bottom_ref', 'x')].values[0]
+    y_bottom = df[(shared_FN, 'single', 'Bottom_bottom_ref', 'y')].values[0]
+    x_left = df[(shared_FN, 'single', 'Left_petri_ref', 'x')].values[0]
+    x_right = df[(shared_FN, 'single', 'Right_petri_ref', 'x')].values[0]
+    x_bottom_left = df[(shared_FN, 'single', 'Bottom_left_ref', 'x')].values[0]
+    x_bottom_right = df[(shared_FN, 'single', 'Bottom_right_ref', 'x')].values[0]
+
+    # Top dish center (average of four points)
+    center_top_x = np.mean([x_top, x_left, x_right, x_inter])
+    center_top_y = np.mean([y_top, y_inter])
+
+    # Bottom dish center (average of four points)
+    center_bottom_x = np.mean([x_bottom, x_bottom_left, x_bottom_right, x_inter])
+    center_bottom_y = np.mean([y_bottom, y_inter])
+
+    return (center_top_x, center_top_y), (center_bottom_x, center_bottom_y)
+
+
+# 6. Trajectory filtering functions
+
+def filter_jumps(x, y, max_jump=70):
+    """
+    Removes unrealistic jumps between consecutive frames (> max_jump pixels)
+    , due to tracking errors.
+    """
+    dx = np.diff(x)                   # Frame-to-frame x displacement
+    dy = np.diff(y)                   # Frame-to-frame y displacement
+    dist = np.sqrt(dx**2 + dy**2)    # Euclidean distance
+    jump_mask = dist > max_jump       # Mask of jumps exceeding threshold
+    jump_mask = np.insert(jump_mask, 0, False)  # Align mask with data length. debug line 
+    x_filtered = x.copy()
+    y_filtered = y.copy()
+    x_filtered[jump_mask] = np.nan    # Replace jumps with NaN
+    y_filtered[jump_mask] = np.nan
+    return x_filtered, y_filtered
+
+
+# 7. Plotting function
+
+def plot_side_by_side(df_before, df_after, title_before, title_after, center1, center2, radius):
+    """
+    Plots raw trajectories (left) and filtered trajectories (right)
+    for both bees. Draws Petri dish outlines.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(18,8))
+
+    # Loop over BEFORE and AFTER dataframes
+    for ax, (df, title) in zip(axes, [(df_before, title_before), (df_after, title_after)]):
+        for i, bee in enumerate(bees):
+            color = colors[i % len(colors)]
+            for part in bodyparts:
+                if (shared_FN, bee, part, 'x') not in df.columns:
+                    continue
+                x = df[(shared_FN, bee, part, 'x')].values
+                y = df[(shared_FN, bee, part, 'y')].values
+                if np.all(np.isnan(x)) or np.all(np.isnan(y)):
+                    continue
+
+                # Important: Break trajectories at NaN gaps so lines don’t connect missing data. 
+                # The lines can be connected by applying predictive trajectory filters.
+                # They create unmasked jumps otherwise. 
+                not_nan_idx = np.where(~np.isnan(x))[0]
+                if len(not_nan_idx) == 0:
+                    continue
+                segments = np.split(not_nan_idx, np.where(np.diff(not_nan_idx) != 1)[0]+1)
+                for seg in segments:
+                    ax.plot(x[seg], y[seg], color=color, alpha=0.7)
+                    ax.scatter(x[seg], y[seg], color=color, s=15, alpha=0.9)
+
+        # Draw Petri dish outlines only in the AFTER panel. That will show that there is no trajectory point outside of Petri. 
+        if title == title_after:
+            ax.add_patch(Circle(center1, radius, color='gray', fill=False, linestyle='--', alpha=0.5))
+            ax.add_patch(Circle(center2, radius, color='gray', fill=False, linestyle='--', alpha=0.5))
+
+        ax.set_title(title)
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.invert_yaxis()   # Matches image coordinate system. The debug item or visual is crooked
+        ax.axis('equal')    # Maintain aspect ratio. Also debug. 
+
+    plt.tight_layout()
+    plt.show()
+
+
+# 8. Filter trajectories: creating a new file with filtered data and a new name to avoid misuse of old data. 
+
+df_filtered = df.copy()   # first Copy original data frame
+
+for bee in bees:
+    for part in bodyparts:
+        if (shared_FN, bee, part, 'x') not in df_filtered.columns:
+            continue
+        x = df_filtered[(shared_FN, bee, part, 'x')].values
+        y = df_filtered[(shared_FN, bee, part, 'y')].values
+
+        # Keep only points inside the Petri dish. The petri dishes were lined up at the borders and separated by code earlier. 
+        dist1 = np.sqrt((x - center1[0])**2 + (y - center1[1])**2)
+        dist2 = np.sqrt((x - center2[0])**2 + (y - center2[1])**2)
+        mask = (dist1 <= radius) | (dist2 <= radius)
+        x, y = np.where(mask, x, np.nan), np.where(mask, y, np.nan)
+
+        # Remove sudden unrealistic jumps
+        x, y = filter_jumps(x, y, max_jump)
+
+        # Replace filtered data in DataFrame
+        df_filtered[(shared_FN, bee, part, 'x')] = x
+        df_filtered[(shared_FN, bee, part, 'y')] = y
+
+
+# 9. Plot trajectories before vs after for visualization if the code is working
+
+plot_side_by_side(df, df_filtered, 
+                  title_before=f"{file_name} - BEFORE filtering",
+                  title_after=f"{file_name} - AFTER filtering",
+                  center1=center1, center2=center2, radius=radius)
+
+
+# 10. Save filtered CSV as filtered.csv. the code will replace the former filtered CVS file so comment untill rigth result. 
+save_path = os.path.join(folder, file_name.replace(".csv","_filtered.csv"))
+df_filtered.to_csv(save_path, index=False)
+print(f"Filtered CSV saved to: {save_path}")  # Takes ~5 minutes with CPU. 

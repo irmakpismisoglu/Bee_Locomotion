@@ -1,0 +1,201 @@
+
+# Bee Distance and Group Comparison
+
+
+#   Import necessary libraries
+import os               # For file and folder handling
+import glob             # For searching files using patterns
+import numpy as np      # For numerical calculations
+import pandas as pd     # For handling tabular data fo this code 
+from scipy.io import savemat          # To save results in MATLAB format for visualization (could be changed)
+from scipy.stats import shapiro, ttest_ind, mannwhitneyu  # For statistics
+import matplotlib.pyplot as plt       # For plotting graphs
+
+
+# 2. Settings
+
+
+# 2  Maximum allowed jump in pixels (to remove tracking errors)
+max_jump = 70  
+
+# 3  Bee identifiers
+bees = ['b1', 'b2']  
+
+# 4  Body part to analyze
+bodypart = 'head'  
+
+# 5  Paths to the control and germ-reduced group folders
+cn_folder = 
+gr_folder = 
+
+
+# 3. Read DLC CSV
+
+
+# 6  Function to read DLC CSV with multi-level headers
+def read_dlc_csv(filepath, individual, bodypart):
+    # 7  Read CSV file (4-level header: scorer, individual, bodypart, coords)
+    df = pd.read_csv(filepath, header=[0,1,2,3], low_memory=False)
+    # 8  Extract the scorer name (first level of header)
+    same_FN = df.columns.levels[0][0]
+    # 9  Extract x and y coordinates for the specified bee and bodypart
+    x = df[(same_FN, individual, bodypart, 'x')].values
+    y = df[(same_FN, individual, bodypart, 'y')].values
+    # 10 Return dataframe, coordinates, and scorer name
+    return df, x, y, same_FN
+
+# 4. Trajectory filtering
+
+# 11  Function to filter unrealistic trajectories
+def filter_xy(x, y, center1, center2, radius, max_jump=70):
+    # 12  Distance from top center
+    dist1 = np.sqrt((x - center1[0])**2 + (y - center1[1])**2)
+    # 13  Distance from bottom center
+    dist2 = np.sqrt((x - center2[0])**2 + (y - center2[1])**2)
+    # 14  Keep points within the radius of either center
+    mask = (dist1 <= radius) | (dist2 <= radius)
+    x, y = np.where(mask, x, np.nan), np.where(mask, y, np.nan)
+    # 15  Compute frame-to-frame differences
+    dx = np.diff(x)
+    dy = np.diff(y)
+    dist = np.sqrt(dx**2 + dy**2)
+    # 16  Detect jumps larger than max_jump pixels
+    jump_mask = dist > max_jump
+    jump_mask = np.insert(jump_mask, 0, False)  # First frame has no diff
+    x[jump_mask] = np.nan
+    y[jump_mask] = np.nan
+    # 17  Return filtered coordinates
+    return x, y
+
+# 5. Compute total distance 
+
+
+# 18  Function to calculate total distance traveled
+def calc_total_distance(df, same_FN, x, y, center1, center2, radius):
+    # 19  Filter the trajectory
+    x, y = filter_xy(x, y, center1, center2, radius, max_jump=max_jump)
+    # 20  Compute differences
+    dx = np.diff(x)
+    dy = np.diff(y)
+    # 21  Euclidean distances
+    dist = np.sqrt(dx**2 + dy**2)
+    # 22  Remove distances exceeding max_jump
+    dist[dist > max_jump] = np.nan
+    # 23  Sum distances ignoring NaNs
+    return np.nansum(dist)
+
+
+# 6. Process all files in a folder
+
+# 24  Function to process all CSV files in a folder
+def process_folder(folder_path, individual='b1', bodypart='head'):
+    # 25  Find all CSV files
+    file_list = glob.glob(os.path.join(folder_path, '*.csv'))
+    # 26  Initialize list to store total distances
+    total_distances = []
+    # 27  Loop over all files
+    for file in file_list:
+        # 28  Read CSV
+        df, x, y, same_FN = read_dlc_csv(file, individual, bodypart)
+        def calculate_centers(df, shared_FN):
+    """Compute geometric centers for top and bottom Petri dishes."""
+    x_top = df[(shared_FN, 'single', 'Top_petri_ref', 'x')].values[0]
+    y_top = df[(shared_FN, 'single', 'Top_petri_ref', 'y')].values[0]
+    x_inter = df[(shared_FN, 'single', 'interaction_point', 'x')].values[0]
+    y_inter = df[(shared_FN, 'single', 'interaction_point', 'y')].values[0]
+    x_bottom = df[(shared_FN, 'single', 'Bottom_bottom_ref', 'x')].values[0]
+    y_bottom = df[(shared_FN, 'single', 'Bottom_bottom_ref', 'y')].values[0]
+    x_left = df[(shared_FN, 'single', 'Left_petri_ref', 'x')].values[0]
+    x_right = df[(shared_FN, 'single', 'Right_petri_ref', 'x')].values[0]
+    x_bottom_left = df[(shared_FN, 'single', 'Bottom_left_ref', 'x')].values[0]
+    x_bottom_right = df[(shared_FN, 'single', 'Bottom_right_ref', 'x')].values[0]
+
+    # Top dish center (average of four points)
+    center_top_x = np.mean([x_top, x_left, x_right, x_inter])
+    center_top_y = np.mean([y_top, y_inter])
+
+    # Bottom dish center (average of four points)
+    center_bottom_x = np.mean([x_bottom, x_bottom_left, x_bottom_right, x_inter])
+    center_bottom_y = np.mean([y_bottom, y_inter])
+
+    return (center_top_x, center_top_y), (center_bottom_x, center_bottom_y)
+
+        # 32  Calculate total distance for this bee
+        dist = calc_total_distance(df, same_FN, x, y, center1, center2, radius)
+        total_distances.append(dist)
+    # 33  Return array of total distances
+    return np.array(total_distances)
+
+
+# 7. Plotting
+
+
+# 34  Function to plot mean distances with SEM and individual points
+def plot_with_matplotlib(cn_data, gr_data, p_value, test_name):
+    groups = ['CN', 'GR']
+    # 35  Calculate mean
+    means = [np.mean(cn_data), np.mean(gr_data)]
+    # 36  Calculate standard error of mean (SEM)
+    sems = [np.std(cn_data, ddof=1)/np.sqrt(len(cn_data)),
+            np.std(gr_data, ddof=1)/np.sqrt(len(gr_data))]
+    # 37  Create figure
+    fig, ax = plt.subplots(figsize=(8,6))
+    bar_colors = ['blue', 'red']
+    # 38  Plot bar graph
+    ax.bar(groups, means, yerr=sems, capsize=10, color=bar_colors, alpha=0.7)
+    # 39  Overlay individual data points with jitter
+    jitter_strength = 0.08
+    for i, data in enumerate([cn_data, gr_data]):
+        x = np.random.normal(i, jitter_strength, size=len(data))
+        ax.scatter(x, data, color='black', alpha=0.7)
+    # 40  Label axes and title
+    ax.set_ylabel('Total Distance (pixels)')
+    ax.set_title(f'Total Distance by Group ({test_name}, p={p_value:.3f})')
+    plt.tight_layout()
+    plt.show()
+
+
+# 8. Main analysis
+
+
+# 41  Main function to run the analysis
+def main():
+    # 42  Process CN folder
+    cn_distances = process_folder(cn_folder)
+    # 43  Process GR folder
+    gr_distances = process_folder(gr_folder)
+    # 44  Shapiro-Wilk normality test
+    w_cn, p_cn = shapiro(cn_distances)
+    w_gr, p_gr = shapiro(gr_distances)
+    print(f"Shapiro CN: W={w_cn:.3f}, p={p_cn:.3f}")
+    print(f"Shapiro GR: W={w_gr:.3f}, p={p_gr:.3f}")
+    # 45  Descriptive statistics
+    mean_cn, sd_cn = np.mean(cn_distances), np.std(cn_distances, ddof=1)
+    sem_cn = sd_cn / np.sqrt(len(cn_distances))
+    mean_gr, sd_gr = np.mean(gr_distances), np.std(gr_distances, ddof=1)
+    sem_gr = sd_gr / np.sqrt(len(gr_distances))
+    print(f"CN: Mean={mean_cn:.3f}, SD={sd_cn:.3f}, SEM={sem_cn:.3f}")
+    print(f"GR: Mean={mean_gr:.3f}, SD={sd_gr:.3f}, SEM={sem_gr:.3f}")
+    # 46  Decide statistical test based on normality
+    alpha = 0.05
+    if p_cn > alpha and p_gr > alpha:
+        stat, p_test = ttest_ind(cn_distances, gr_distances, equal_var=False)
+        test_name = 'Independent t-test'
+    else:
+        stat, p_test = mannwhitneyu(cn_distances, gr_distances, alternative='two-sided')
+        test_name = 'Mann-Whitney U test'
+    print(f"{test_name}: stat={stat:.3f}, p={p_test:.3f}")
+    # 47  Save results for MATLAB
+    savemat('total_distances.mat', {'cn_distances': cn_distances,
+                                    'gr_distances': gr_distances})
+    print("Saved total_distances.mat")
+    # 48  Plot results
+    plot_with_matplotlib(cn_distances, gr_distances, p_test, test_name)
+
+
+# 9. Run
+
+
+# 49  Execute main function
+if __name__ == "__main__":
+    main()

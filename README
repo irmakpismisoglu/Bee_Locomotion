@@ -1,0 +1,22 @@
+Project title: “The role of the microbiota on locomotion and social behaviour of the honey bee"
+
+Project description: The project is using the coordinate based trancking data from DLC software. The codes aims to
+1. clean the data from frames that are not needed and the filtering the outliers, 
+2. to make locomotion analysis such as velocity, total distance traveled, velecoity spread, 
+3. to make social interaction analysissuch as interindividual distance, following behaviour, following etc.
+
+Table of Contents (An extended explanations can be found in each file) 
+1.Filtering_Visualization_GIU 
+2.frame_purge
+3.Total_Distance
+4.Velocity
+5.Velocity_Spread
+6.Fast_Base_Velocity
+7.Event_phase_velocity (R)
+8.Mean_Distance_Interindividual
+9.CW_CCW
+10.Motion_correlation
+10.Quadrant_preference_fin 
+
+
+ for further information requirements irmakpsmsgl@gmail.com
